@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Monitoramento</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; background: #f8f9fa; }
+    .card { background: #fff; padding: 1rem; margin: 1rem 0; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    input, button { padding: 8px; margin: 4px; border: 1px solid #ccc; border-radius: 4px; }
+    button { background: #0d6efd; color: #fff; cursor: pointer; }
+    button:disabled { background: #6c757d; cursor: not-allowed; }
+    #status { font-size: 0.9rem; color: #666; margin: 10px 0; }
+    #msg { font-size: 0.9rem; margin: 10px 0; min-height: 1.2em; }
+    .success { color: #198754; }
+    .error { color: #dc3545; }
+    canvas { max-height: 250px; }
+  </style>
+</head>
+<body>
+  <h1>Painel de Monitoramento em Tempo Real</h1>
+  
+  <div class="card" id="auth-panel">
+    <input id="user" placeholder="usuario">
+    <input id="pass" type="password" placeholder="senha">
+    <button id="btn-register" onclick="register()">Cadastrar</button>
+    <button id="btn-login" onclick="login()">Entrar</button>
+  </div>
+  
+  <div id="status">Desconectado</div>
+  <div id="msg"></div>
+  
+  <div class="card"><canvas id="tempC"></canvas></div>
+  <div class="card"><canvas id="humC"></canvas></div>
+
+  <script>
+    let token = localStorage.getItem('token');
+    const statusEl = document.getElementById('status');
+    const msgEl = document.getElementById('msg');
+    
+    const tempChart = new Chart(document.getElementById('tempC'), {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{ label: 'Temperatura (°C)', data: [], borderColor: '#dc3545', tension: 0.3 }]
+      },
+      options: { animation: false, scales: { y: { min: 15, max: 35 } } }
+    });
+    
+    const humChart = new Chart(document.getElementById('humC'), {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{ label: 'Umidade (%)', data: [], borderColor: '#0d6efd', tension: 0.3 }]
+      },
+      options: { animation: false, scales: { y: { min: 0, max: 100 } } }
+    });
+
+    function showMessage(text, isError = false) {
+      msgEl.textContent = text;
+      msgEl.className = isError ? 'error' : 'success';
+      setTimeout(() => { msgEl.textContent = ''; msgEl.className = ''; }, 3000);
+    }
+
+    function setButtons(disabled) {
+      document.getElementById('btn-register').disabled = disabled;
+      document.getElementById('btn-login').disabled = disabled;
+    }
+
+    async function apiCall(endpoint, body) {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Erro na requisição');
+      return data;
+    }
+
+    async function register() {
+      const user = document.getElementById('user').value.trim();
+      const pass = document.getElementById('pass').value.trim();
+      if (!user || !pass) { showMessage('Preencha usuário e senha', true); return; }
+      
+      setButtons(true);
+      try {
+        const result = await apiCall('/api/register', { username: user, password: pass });
+        showMessage(result.status || 'Cadastrado');
+        if (result.status === 'cadastrado') {
+          document.getElementById('pass').value = '';
+        }
+      } catch (e) {
+        showMessage(e.message, true);
+        console.error('Cadastro:', e);
+      } finally {
+        setButtons(false);
+      }
+    }
+
+    async function login() {
+      const user = document.getElementById('user').value.trim();
+      const pass = document.getElementById('pass').value.trim();
+      if (!user || !pass) { showMessage('Preencha usuário e senha', true); return; }
+      
+      setButtons(true);
+      try {
+        const result = await apiCall('/api/login', { username: user, password: pass });
+        if (result.token) {
+          token = result.token;
+          localStorage.setItem('token', token);
+          statusEl.textContent = 'Autenticado';
+          showMessage('Login realizado com sucesso');
+          document.getElementById('pass').value = '';
+        }
+      } catch (e) {
+        showMessage(e.message, true);
+        console.error('Login:', e);
+      } finally {
+        setButtons(false);
+      }
+    }
+
+    // WebSocket para tempo real
+    const ws = new WebSocket(`ws://${location.host}/ws`);
+    ws.onopen = () => {
+      if (token) statusEl.textContent = 'Conectado (Tempo Real)';
+    };
+    ws.onclose = () => { statusEl.textContent = 'Desconectado'; };
+    ws.onmessage = (event) => {
+      try {
+        const d = JSON.parse(event.data);
+        const now = new Date().toLocaleTimeString();
+        
+        tempChart.data.labels.push(now);
+        tempChart.data.datasets[0].data.push(d.temp);
+        humChart.data.labels.push(now);
+        humChart.data.datasets[0].data.push(d.hum);
+        
+        if (tempChart.data.labels.length > 20) {
+          tempChart.data.labels.shift(); tempChart.data.datasets[0].data.shift();
+          humChart.data.labels.shift(); humChart.data.datasets[0].data.shift();
+        }
+        tempChart.update(); humChart.update();
+        
+        if (d.temp > 28) {
+          statusEl.textContent = `ALERTA: ${d.temp}°C`;
+          statusEl.style.color = '#dc3545';
+          setTimeout(() => { if (token) statusEl.textContent = 'Conectado (Tempo Real)'; statusEl.style.color = '#666'; }, 3000);
+        }
+      } catch (e) { console.error('WS message:', e); }
+    };
+  </script>
+</body>
+</html>

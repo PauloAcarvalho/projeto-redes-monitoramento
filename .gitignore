@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Projeto
+database.db
+app.log
+*.pcapng
+*.jpeg
+*.png
